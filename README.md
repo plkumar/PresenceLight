@@ -25,6 +25,7 @@
 | [Phillips Hue Bridge](https://www2.meethue.com/en-us/p/hue-bridge/046677458478)
 | [Phillips Hue Light Bulb](https://www2.meethue.com/en-us/p/hue-white-and-color-ambiance-1-pack-e26/046677548483) |
 | [Any LIFX Light](https://www.lifx.com/pages/all-products) |
+| [Yeelight/Xiaomi LED Wi-Fi Smart Bulb](https://xiaomi-mi.com/smart-lighting/xiaomi-yeelight-smart-led-bulb-ipl-e27/) - requires [Lan Control](https://www.yeelight.com/faqs/lan_control) enabled to discover and control.|
 
 ## Configure Hardware
 - [Configure Hardware](https://github.com/isaacrlevin/PresenceLight/wiki/Configure-Hardware)
@@ -49,3 +50,4 @@ Presence Light would not be possibke without the amazing work from the contribut
 - [wpftoolkit](https://github.com/xceedsoftware/wpftoolkit)
 - [OSVersionHelper](https://github.com/onovotny/OSVersionHelper)
 - [WpfAnimatedGif](https://github.com/XamlAnimatedGif/WpfAnimatedGif)
+- [YeelightAPI](https://github.com/roddone/YeelightAPI)
