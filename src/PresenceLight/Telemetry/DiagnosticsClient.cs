@@ -8,15 +8,16 @@ namespace PresenceLight.Telemetry
     public static class DiagnosticsClient
     {
         private static bool _initialized;
-        private static TelemetryClient _client = new TelemetryClient();
+        private static TelemetryConfiguration config = TelemetryConfiguration.CreateDefault();
+        private static TelemetryClient _client = new TelemetryClient(config);
 
         public static void Initialize()
         {
-            TelemetryConfiguration.Active.TelemetryInitializers.Add(new AppVersionTelemetryInitializer());
-            TelemetryConfiguration.Active.TelemetryInitializers.Add(new EnvironmentTelemetryInitializer());
+            //TelemetryConfiguration.Active.TelemetryInitializers.Add(new AppVersionTelemetryInitializer());
+            //TelemetryConfiguration.Active.TelemetryInitializers.Add(new EnvironmentTelemetryInitializer());
 
             _initialized = true;
-            _client = new TelemetryClient();
+            _client = new TelemetryClient(config);
 
 
             System.Windows.Application.Current.Startup += Application_Startup;

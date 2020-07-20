@@ -60,9 +60,9 @@ namespace PresenceLight
             if (t.IsFaulted)
             { }
 
-            this.Dispatcher.Invoke(() =>
+            this.Dispatcher.Invoke(async () =>
             {
-                LoadApp();
+                await LoadApp();
 
                 var tbContext = notificationIcon.DataContext;
                 DataContext = Config;
@@ -81,7 +81,7 @@ namespace PresenceLight
             RuntimeVersionInfo.Text = ThisAppInfo.GetDotNetRuntimeInfo();
         }
 
-        private void LoadApp()
+        private async Task LoadApp()
         {
             CheckHueSettings();
             CheckLIFXSettings();
@@ -100,7 +100,7 @@ namespace PresenceLight
             notificationIcon.Text = PresenceConstants.Inactive;
             notificationIcon.Icon = new BitmapImage(new Uri(IconConstants.GetIcon(String.Empty, IconConstants.Inactive)));
 
-            CallGraph();
+            await CallGraph();
         }
 
         private void SyncOptions()

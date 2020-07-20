@@ -8,6 +8,7 @@ using PresenceLight.Telemetry;
 using PresenceLight.Services;
 using System.Diagnostics;
 using System.Threading;
+using Microsoft.ApplicationInsights.Extensibility;
 
 namespace PresenceLight
 {
@@ -62,6 +63,11 @@ namespace PresenceLight
             services.AddSingleton<IYeelightService, YeelightService>();
             services.AddSingleton<LIFXOAuthHelper, LIFXOAuthHelper>();
             services.AddSingleton<MainWindow>();
+            services.Configure<TelemetryConfiguration>((o) =>
+            {
+                //o.InstrumentationKey = "123";
+                o.TelemetryInitializers.Add(new OperationCorrelationTelemetryInitializer());
+            });
 
             DiagnosticsClient.Initialize();
 
