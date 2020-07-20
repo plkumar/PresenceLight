@@ -1,6 +1,8 @@
 ![Logo](Icon.png)
 # PresenceLight
-![Build Status](https://dev.azure.com/isaaclevin/PresenceLight/_apis/build/status/CI-build-wpf?branchName=master)
+![Build Status](https://dev.azure.com/isaaclevin/PresenceLight/_apis/build/status/CI-build-wpf?branchName=main)
+
+### [Cross Platform Blazor Version](worker-README.md)
 
 ### WPF Installs
 
@@ -11,12 +13,13 @@
 | Chocolatey | [![Stable build number](https://presencelight.blob.core.windows.net/store/stable_badge.svg)](https://www.microsoft.com/en-us/p/presencelight/9nffkd8gznl7)| [Install](https://chocolatey.org/packages/PresenceLight/)
 | [Windows Package Manager](https://docs.microsoft.com/en-us/windows/package-manager) | [![Stable build number](https://presencelight.blob.core.windows.net/store/stable_badge.svg)](https://www.microsoft.com/en-us/p/presencelight/9nffkd8gznl7)| winget install isaaclevin.presencelight
 
-
 ## What is PresenceLight?
 
-[PresenceLight](https://isaacl.dev/presence-light) is a solution to broadcast your various statuses to a Phillips Hue or LIFX light bulb. Some statuses you can broadcast are: your availability in Microsoft Teams, your current Windows 10 theme, and a theme or color of your choosing. There are other solutions that do something similar to sending Teams Availability to a light, but they require a tethered solution (plugging a light into a computer via USB). What PresenceLight does is leverage the [Presence Api](https://docs.microsoft.com/graph/api/presence-get), which is available in [Microsoft Graph](https://docs.microsoft.com/graph/overview), allowing to retrieve your presence without having to be tethered. This could potentially allow someone to update the light bulb from a remote machine they do not use.
+### [Blog Post](https://isaacl.dev/presence-light)
 
 ### [PresenceLight Demos](https://www.youtube.com/playlist?list=PL_IEvQa-oTVtB3fKUclJNNJ1r-Sxtjc-m)
+
+[PresenceLight](https://isaacl.dev/presence-light) is a solution to broadcast your various statuses to a Phillips Hue or LIFX light bulb. Some statuses you can broadcast are: your availability in Microsoft Teams, your current Windows 10 theme, and a theme or color of your choosing. There are other solutions that do something similar to sending Teams Availability to a light, but they require a tethered solution (plugging a light into a computer via USB). What PresenceLight does is leverage the [Presence Api](https://docs.microsoft.com/graph/api/presence-get), which is available in [Microsoft Graph](https://docs.microsoft.com/graph/overview), allowing to retrieve your presence without having to be tethered. This could potentially allow someone to update the light bulb from a remote machine they do not use.
 
 ## Hardware Requirements
 
@@ -25,7 +28,7 @@
 | [Phillips Hue Bridge](https://www2.meethue.com/en-us/p/hue-bridge/046677458478)
 | [Phillips Hue Light Bulb](https://www2.meethue.com/en-us/p/hue-white-and-color-ambiance-1-pack-e26/046677548483) |
 | [Any LIFX Light](https://www.lifx.com/pages/all-products) |
-| [Yeelight/Xiaomi LED Wi-Fi Smart Bulb](https://xiaomi-mi.com/smart-lighting/xiaomi-yeelight-smart-led-bulb-ipl-e27/) - requires [Lan Control](https://www.yeelight.com/faqs/lan_control) enabled to discover and control.|
+| Any light which can be controlled via a GET or POST call to a web API |
 
 ## Configure Hardware
 - [Configure Hardware](https://github.com/isaacrlevin/PresenceLight/wiki/Configure-Hardware)
@@ -50,4 +53,3 @@ Presence Light would not be possibke without the amazing work from the contribut
 - [wpftoolkit](https://github.com/xceedsoftware/wpftoolkit)
 - [OSVersionHelper](https://github.com/onovotny/OSVersionHelper)
 - [WpfAnimatedGif](https://github.com/XamlAnimatedGif/WpfAnimatedGif)
-- [YeelightAPI](https://github.com/roddone/YeelightAPI)

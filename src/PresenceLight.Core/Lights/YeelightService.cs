@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using System.Threading;
 using YeelightAPI;
 using System.Drawing;
+using Q42.HueApi.ColorConverters;
 
 namespace PresenceLight.Core
 {
@@ -33,9 +34,6 @@ namespace PresenceLight.Core
 
         public async Task SetColor(string availability, string lightId)
         {
-
-            //var devices = await DeviceLocator.Discover();
-
             var device = this.deviceGroup.FirstOrDefault(x => x.Id == lightId);
 
             if (device == null)
@@ -43,24 +41,37 @@ namespace PresenceLight.Core
                 return;
             }
 
-            //var deviceGroup = new DeviceGroup(new[] { device });
-
             device.OnNotificationReceived += Device_OnNotificationReceived;
             device.OnError += Device_OnError;
 
-            if(!await device.Connect())
+            if (!await device.Connect())
             {
                 return;
             }
 
-            if (_options.Brightness == 0)
+            if (_options.LightSettings.UseDefaultBrightness)
             {
-                await device.TurnOff();
+                if (_options.LightSettings.DefaultBrightness == 0)
+                {
+                    await device.TurnOff();
+                }
+                else
+                {
+                    await device.TurnOn();
+                    await device.SetBrightness(Convert.ToInt32(_options.LightSettings.DefaultBrightness));
+                }
             }
             else
             {
-                await device.TurnOn();
-                await device.SetBrightness(Convert.ToInt32(_options.Brightness));
+                if (_options.LightSettings.Hue.HueBrightness == 0)
+                {
+                    await device.TurnOff();
+                }
+                else
+                {
+                    await device.TurnOn();
+                    await device.SetBrightness(Convert.ToInt32(_options.LightSettings.Yeelight.YeelightBrightness));
+                }
             }
 
             switch (availability)
@@ -87,8 +98,8 @@ namespace PresenceLight.Core
                     await device.SetRGBColor(255, 255, 255);
                     break;
                 default:
-                    var color = System.Drawing.ColorTranslator.FromHtml(availability);
-                    await device.SetRGBColor(color.R, color.G, color.B);
+                    var color = new RGBColor(availability);
+                    await device.SetRGBColor((int)color.R, (int)color.G, (int)color.B);
                     break;
             }
         }

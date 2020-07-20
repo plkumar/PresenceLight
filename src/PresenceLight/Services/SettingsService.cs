@@ -4,6 +4,9 @@ using PresenceLight.Core;
 using PresenceLight.Telemetry;
 using System.Threading.Tasks;
 using Windows.Storage;
+using System.IO;
+using Windows.Storage.Streams;
+using ABI.Windows.Foundation.Diagnostics;
 
 namespace PresenceLight
 {
@@ -32,9 +35,40 @@ namespace PresenceLight
         {
             try
             {
-                StorageFile file = await _settingsFolder.CreateFileAsync(SETTINGS_FILENAME, CreationCollisionOption.ReplaceExisting);
                 string content = JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented, new JsonSerializerSettings { });
-                await FileIO.WriteTextAsync(file, content, Windows.Storage.Streams.UnicodeEncoding.Utf8);
+                StorageFile f;
+                if (await IsFilePresent())
+                {
+                    f = await _settingsFolder.GetFileAsync(SETTINGS_FILENAME);
+                }
+                else
+                {
+                    f = await _settingsFolder.CreateFileAsync(SETTINGS_FILENAME, CreationCollisionOption.ReplaceExisting);
+                }
+                bool fileWritten = false;
+
+                while (!fileWritten)
+                {
+                    try
+                    {
+                        await FileIO.WriteTextAsync(f, content, Windows.Storage.Streams.UnicodeEncoding.Utf8);
+                        fileWritten = true;
+                    }
+                    catch (System.Exception e)
+                    {                     
+                    }
+                    //using (StorageStreamTransaction transaction = await f.OpenTransactedWriteAsync())
+                    //{
+
+                    //    using (DataWriter dataWriter = new DataWriter(transaction.Stream))
+                    //    {
+                    //        dataWriter.WriteString(content);
+
+                    //        transaction.Stream.Size = await dataWriter.StoreAsync();
+                    //        await transaction.CommitAsync();
+                    //    }
+                    //}
+                }
                 return true;
             }
             catch (Exception e)
