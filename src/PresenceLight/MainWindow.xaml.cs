@@ -18,6 +18,9 @@ using System.Windows.Input;
 using PresenceLight.Services;
 using PresenceLight.Core.Services;
 using System.Reflection;
+using PresenceLight.Telemetry;
+using System.Reflection.PortableExecutable;
+using System.Collections.Generic;
 
 namespace PresenceLight
 {
@@ -31,8 +34,12 @@ namespace PresenceLight
 
         private string lightMode;
 
+        private Presence presence { get; set; }
+        private DateTime settingsLastSaved = DateTime.MinValue;
+
         private IYeelightService _yeelightService;
         private IHueService _hueService;
+        private ICustomApiService _customApiService;
         private LIFXOAuthHelper _lIFXOAuthHelper;
         private LIFXService _lifxService;
         private GraphServiceClient _graphServiceClient;
@@ -40,7 +47,7 @@ namespace PresenceLight
         private WindowState lastWindowState;
 
         #region Init
-        public MainWindow(IGraphService graphService, IHueService hueService, LIFXService lifxService, IYeelightService yeelightService, IOptionsMonitor<ConfigWrapper> optionsAccessor, LIFXOAuthHelper lifxOAuthHelper)
+        public MainWindow(IGraphService graphService, IHueService hueService, LIFXService lifxService, IYeelightService yeelightService, ICustomApiService customApiService, IOptionsMonitor<ConfigWrapper> optionsAccessor, LIFXOAuthHelper lifxOAuthHelper)
         {
             InitializeComponent();
 
@@ -52,6 +59,7 @@ namespace PresenceLight
             _yeelightService = yeelightService;
             _lifxService = lifxService;
             _hueService = hueService;
+            _customApiService = customApiService;
             _options = optionsAccessor.CurrentValue;
             _lIFXOAuthHelper = lifxOAuthHelper;
             LoadSettings().ContinueWith(
@@ -83,9 +91,9 @@ namespace PresenceLight
 
         private void LoadApp()
         {
-            CheckHueSettings();
-            CheckLIFXSettings();
-            CheckYeelightSettings();
+            CheckHue();
+            CheckLIFX();
+            CheckYeelight();
             CheckAAD();
 
             if (Config.IconType == "Transparent")
@@ -97,8 +105,13 @@ namespace PresenceLight
                 White.IsChecked = true;
             }
 
+            PopulateWorkingDays();
+
             notificationIcon.Text = PresenceConstants.Inactive;
             notificationIcon.Icon = new BitmapImage(new Uri(IconConstants.GetIcon(String.Empty, IconConstants.Inactive)));
+
+            turnOffButton.Visibility = Visibility.Collapsed;
+            turnOnButton.Visibility = Visibility.Collapsed;
 
             CallGraph();
         }
@@ -127,8 +140,18 @@ namespace PresenceLight
                 await SettingsService.DeleteSettings();
                 await SettingsService.SaveSettings(_options);
             }
+            if (Config.LightSettings.UseWorkingHours)
+            {
+                pnlWorkingHours.Visibility = Visibility.Visible;
+                SyncOptions();
+            }
+            else
+            {
+                pnlWorkingHours.Visibility = Visibility.Collapsed;
+                SyncOptions();
+            }
 
-            if (Config.IsPhillipsEnabled)
+            if (Config.LightSettings.Hue.IsPhillipsHueEnabled)
             {
                 pnlPhillips.Visibility = Visibility.Visible;
                 SyncOptions();
@@ -138,7 +161,7 @@ namespace PresenceLight
                 pnlPhillips.Visibility = Visibility.Collapsed;
             }
 
-            if (Config.IsYeelightEnabled)
+            if (Config.LightSettings.Yeelight.IsYeelightEnabled)
             {
                 pnlYeelight.Visibility = Visibility.Visible;
                 SyncOptions();
@@ -148,7 +171,7 @@ namespace PresenceLight
                 pnlYeelight.Visibility = Visibility.Collapsed;
             }
 
-            if (Config.IsLIFXEnabled)
+            if (Config.LightSettings.LIFX.IsLIFXEnabled)
             {
                 getTokenLink.Visibility = Visibility.Visible;
                 pnlLIFX.Visibility = Visibility.Visible;
@@ -159,6 +182,31 @@ namespace PresenceLight
             {
                 getTokenLink.Visibility = Visibility.Collapsed;
                 pnlLIFX.Visibility = Visibility.Collapsed;
+            }
+
+            if (Config.LightSettings.Custom.IsCustomApiEnabled)
+            {
+                pnlCustomApi.Visibility = Visibility.Visible;
+                customApiAvailableMethod.SelectedValue = Config.LightSettings.Custom.CustomApiAvailableMethod;
+                customApiBusyMethod.SelectedValue = Config.LightSettings.Custom.CustomApiBusyMethod;
+                customApiBeRightBackMethod.SelectedValue = Config.LightSettings.Custom.CustomApiBeRightBackMethod;
+                customApiAwayMethod.SelectedValue = Config.LightSettings.Custom.CustomApiAwayMethod;
+                customApiDoNotDisturbMethod.SelectedValue = Config.LightSettings.Custom.CustomApiDoNotDisturbMethod;
+                customApiOfflineMethod.SelectedValue = Config.LightSettings.Custom.CustomApiOfflineMethod;
+                customApiOffMethod.SelectedValue = Config.LightSettings.Custom.CustomApiOffMethod;
+                SyncOptions();
+            }
+            else
+            {
+                pnlCustomApi.Visibility = Visibility.Collapsed;
+            }
+            if (!string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXClientId) && !(string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXClientSecret)))
+            {
+                getTokenLink.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                getTokenLink.Visibility = Visibility.Collapsed;
             }
         }
         #endregion
@@ -213,48 +261,44 @@ namespace PresenceLight
 
             dataPanel.Visibility = Visibility.Visible;
             await SettingsService.SaveSettings(Config);
-            while (true)
-            {
-                await Task.Delay(Convert.ToInt32(Config.PollingInterval * 1000));
-                try
-                {
-                    presence = await System.Threading.Tasks.Task.Run(() => GetPresence());
 
-                    if (lightMode == "Graph")
-                    {
-                        await SetColor(presence.Availability);
-                    }
+            turnOffButton.Visibility = Visibility.Visible;
+            turnOnButton.Visibility = Visibility.Collapsed;
 
-                    if (DateTime.Now.Minute % 5 == 0)
-                    {
-                        await SettingsService.SaveSettings(Config);
-                    }
-
-                    MapUI(presence, null, null);
-                }
-                catch { }
-            }
+            await InteractWithLights();
         }
 
         public async Task SetColor(string color)
         {
-            if (!string.IsNullOrEmpty(Config.HueApiKey) && !string.IsNullOrEmpty(Config.HueIpAddress) && !string.IsNullOrEmpty(Config.SelectedHueLightId))
+            if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
             {
-                await _hueService.SetColor(color, Config.SelectedHueLightId);
+                await _hueService.SetColor(color, Config.LightSettings.Hue.SelectedHueLightId);
             }
 
-            if (Config.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LIFXApiKey))
+            if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
             {
-                await _lifxService.SetColor(color, (Selector)Config.SelectedLIFXItemId);
+                await _lifxService.SetColor(color, (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
             }
 
-            if(Config.IsYeelightEnabled && !string.IsNullOrEmpty(Config.SelectedYeeLightId))
+            if (Config.LightSettings.Yeelight.IsYeelightEnabled && !string.IsNullOrEmpty(Config.LightSettings.Yeelight.SelectedYeelightId))
             {
-                await _yeelightService.SetColor(color, Config.SelectedYeeLightId);
+                await _yeelightService.SetColor(color, Config.LightSettings.Yeelight.SelectedYeelightId);
+            }
+
+            if (Config.LightSettings.Custom.IsCustomApiEnabled)
+            {
+                string response = await _customApiService.SetColor(color);
+                customApiLastResponse.Content = response;
+                if (response.StartsWith("Error:"))
+                {
+                    customApiLastResponse.Foreground = new SolidColorBrush(Colors.Red);
+                }
+                else
+                {
+                    customApiLastResponse.Foreground = new SolidColorBrush(Colors.Green);
+                }
             }
         }
-
-
 
         private async void SignOutButton_Click(object sender, RoutedEventArgs e)
         {
@@ -272,25 +316,11 @@ namespace PresenceLight
                     notificationIcon.Icon = new BitmapImage(new Uri(IconConstants.GetIcon(string.Empty, IconConstants.Inactive)));
                     hueIpAddress.IsEnabled = true;
 
-                    if (Config.IsPhillipsEnabled && !string.IsNullOrEmpty(Config.HueApiKey) && !string.IsNullOrEmpty(Config.HueIpAddress) && !string.IsNullOrEmpty(Config.SelectedHueLightId))
+                    if (Config.LightSettings.Hue.IsPhillipsHueEnabled && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
                     {
-                        await _hueService.SetColor("Off", Config.SelectedHueLightId);
+                        await _hueService.SetColor("Off", Config.LightSettings.Hue.SelectedHueLightId);
                     }
 
-                    //if (Config.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LIFXApiKey))
-                    //{
-                    //    if (ddlLIFXLights.SelectedItem != null && ddlLIFXLights.SelectedItem.GetType() == typeof(LifxCloud.NET.Models.Group))
-                    //    {
-                    //        Config.SelectedLIFXItemId = $"group_id:{((LifxCloud.NET.Models.Group)ddlLIFXLights.SelectedItem).Id}";
-                    //    }
-
-                    //    if (ddlLIFXLights.SelectedItem != null && ddlLIFXLights.SelectedItem.GetType() == typeof(LifxCloud.NET.Models.Light))
-                    //    {
-                    //        Config.SelectedLIFXItemId = $"id:{((LifxCloud.NET.Models.Light)ddlLIFXLights.SelectedItem).Id}";
-                    //    }
-
-                    //    await _lifxService.SetColor("Off", (Selector)Config.SelectedLIFXItemId);
-                    //}
                     if (lightMode == "Graph")
                     {
                         await SetColor("Off");
@@ -357,7 +387,7 @@ namespace PresenceLight
                     break;
                 case "DoNotDisturb":
                     image = new BitmapImage(new Uri(IconConstants.GetIcon(Config.IconType, IconConstants.DoNotDisturb)));
-                    color = MapColor("#800000");
+                    color = MapColor("#B03CDE");
                     notificationIcon.Text = PresenceConstants.DoNotDisturb;
                     break;
                 case "OutOfOffice":
@@ -387,6 +417,9 @@ namespace PresenceLight
             {
                 userName.Content = profile.DisplayName;
             }
+
+            activity.Content = "Activity: " + presence.Activity;
+            availability.Content = "Availability: " + presence.Availability;
         }
         #endregion
 
@@ -464,12 +497,56 @@ namespace PresenceLight
             }
 
             CheckAAD();
-            Config.Brightness = Convert.ToInt32(brightness.Value);
+            Config.LightSettings.DefaultBrightness = Convert.ToInt32(brightness.Value);
+
+            SetWorkingDays();
 
             SyncOptions();
             await SettingsService.SaveSettings(Config);
             lblSettingSaved.Visibility = Visibility.Visible;
             btnSettings.IsEnabled = true;
+        }
+
+        private void SetWorkingDays()
+        {
+            List<string> days = new List<string>();
+
+            if (Monday.IsChecked.Value)
+            {
+                days.Add("Monday");
+            }
+
+            if (Tuesday.IsChecked.Value)
+            {
+                days.Add("Tuesday");
+            }
+
+            if (Wednesday.IsChecked.Value)
+            {
+                days.Add("Wednesday");
+            }
+
+            if (Thursday.IsChecked.Value)
+            {
+                days.Add("Thursday");
+            }
+
+            if (Friday.IsChecked.Value)
+            {
+                days.Add("Friday");
+            }
+
+            if (Saturday.IsChecked.Value)
+            {
+                days.Add("Saturday");
+            }
+
+            if (Sunday.IsChecked.Value)
+            {
+                days.Add("Sunday");
+            }
+
+            Config.LightSettings.WorkingDays = string.Join("|", days);
         }
 
         private void CheckAAD()
@@ -499,6 +576,49 @@ namespace PresenceLight
         }
         #endregion
 
+        private void PopulateWorkingDays()
+        {
+            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingDays))
+            {
+
+                if (Config.LightSettings.WorkingDays.Contains("Monday"))
+                {
+                    Monday.IsChecked = true;
+                }
+
+                if (Config.LightSettings.WorkingDays.Contains("Tuesday"))
+                {
+                    Tuesday.IsChecked = true;
+                }
+
+                if (Config.LightSettings.WorkingDays.Contains("Wednesday"))
+                {
+                    Wednesday.IsChecked = true;
+                }
+
+                if (Config.LightSettings.WorkingDays.Contains("Thursday"))
+                {
+                    Thursday.IsChecked = true;
+                }
+
+                if (Config.LightSettings.WorkingDays.Contains("Friday"))
+                {
+                    Friday.IsChecked = true;
+                }
+
+                if (Config.LightSettings.WorkingDays.Contains("Saturday"))
+                {
+                    Saturday.IsChecked = true;
+                }
+
+                if (Config.LightSettings.WorkingDays.Contains("Sunday"))
+                {
+                    Sunday.IsChecked = true;
+                }
+            }
+        }
+
+
         private void TabControl_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             lblHueSaved.Visibility = Visibility.Collapsed;
@@ -506,12 +626,68 @@ namespace PresenceLight
             lblSettingSaved.Visibility = Visibility.Collapsed;
         }
 
+        private async void cbSyncLights(object sender, RoutedEventArgs e)
+        {
+            if (!Config.LightSettings.SyncLights)
+            {
+                await SetColor("Off");
+                turnOffButton.Visibility = Visibility.Collapsed;
+                turnOnButton.Visibility = Visibility.Visible;
+            }
+
+            SyncOptions();
+            await SettingsService.SaveSettings(Config);
+            e.Handled = true;
+        }
+
+        private async void cbUseDefaultBrightnessChanged(object sender, RoutedEventArgs e)
+        {
+            if (Config.LightSettings.UseDefaultBrightness)
+            {
+                pnlDefaultBrightness.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                pnlDefaultBrightness.Visibility = Visibility.Collapsed;
+            }
+
+            SyncOptions();
+            await SettingsService.SaveSettings(Config);
+            e.Handled = true;
+        }
+
+        private void cbUseWorkingHoursChanged(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursStartTime))
+            {
+                Config.LightSettings.WorkingHoursStartTime = DateTime.Parse(Config.LightSettings.WorkingHoursStartTime).TimeOfDay.ToString();
+            }
+
+            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursEndTime))
+            {
+                Config.LightSettings.WorkingHoursEndTime = DateTime.Parse(Config.LightSettings.WorkingHoursEndTime).TimeOfDay.ToString();
+            }
+
+            if (Config.LightSettings.UseWorkingHours)
+            {
+                pnlWorkingHours.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                pnlWorkingHours.Visibility = Visibility.Collapsed;
+            }
+
+            SyncOptions();
+            e.Handled = true;
+        }
+
         #region Tray Methods
 
-        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        protected override async void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
-            this.Hide();
             e.Cancel = true;
+            await SettingsService.SaveSettings(Config);
+            this.Hide();
         }
 
         private void OnNotifyIconDoubleClick(object sender, MouseButtonEventArgs e)
@@ -527,35 +703,189 @@ namespace PresenceLight
             this.Show();
             this.WindowState = this.lastWindowState;
         }
-        private async void OnExitClick(object sender, RoutedEventArgs e)
+
+        private void OnTurnOnSyncClick(object sender, RoutedEventArgs e)
         {
-            if (!string.IsNullOrEmpty(Config.HueApiKey) && !string.IsNullOrEmpty(Config.HueIpAddress) && !string.IsNullOrEmpty(Config.SelectedHueLightId))
+            lightMode = "Graph";
+
+            turnOffButton.Visibility = Visibility.Visible;
+            turnOnButton.Visibility = Visibility.Collapsed;
+
+            this.WindowState = this.lastWindowState;
+        }
+
+        private async void OnTurnOffSyncClick(object sender, RoutedEventArgs e)
+        {
+            lightMode = "Custom";
+
+            if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
             {
-                await _hueService.SetColor("Off", Config.SelectedHueLightId);
+                await _hueService.SetColor("Off", Config.LightSettings.Hue.SelectedHueLightId);
             }
 
-            if (Config.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LIFXApiKey))
+            if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
             {
 
-                await _lifxService.SetColor("Off", (Selector)Config.SelectedLIFXItemId);
+                await _lifxService.SetColor("Off", (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
+            }
+
+            turnOffButton.Visibility = Visibility.Collapsed;
+            turnOnButton.Visibility = Visibility.Visible;
+
+            notificationIcon.Text = PresenceConstants.Inactive;
+            notificationIcon.Icon = new BitmapImage(new Uri(IconConstants.GetIcon(string.Empty, IconConstants.Inactive)));
+
+            this.WindowState = this.lastWindowState;
+        }
+
+
+        private async void OnExitClick(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
+            {
+                await _hueService.SetColor("Off", Config.LightSettings.Hue.SelectedHueLightId);
+            }
+
+            if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
+            {
+
+                await _lifxService.SetColor("Off", (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
             }
             await SettingsService.SaveSettings(Config);
             System.Windows.Application.Current.Shutdown();
         }
         private async void Current_SessionEnding(object sender, SessionEndingCancelEventArgs e)
         {
-            if (!string.IsNullOrEmpty(Config.HueApiKey) && !string.IsNullOrEmpty(Config.HueIpAddress) && !string.IsNullOrEmpty(Config.SelectedHueLightId))
+            if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
             {
-                await _hueService.SetColor("Off", Config.SelectedHueLightId);
+                await _hueService.SetColor("Off", Config.LightSettings.Hue.SelectedHueLightId);
             }
 
-            if (Config.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LIFXApiKey))
+            if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
             {
 
-                await _lifxService.SetColor("Off", (Selector)Config.SelectedLIFXItemId);
+                await _lifxService.SetColor("Off", (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
             }
+
+            if (Config.LightSettings.Custom.IsCustomApiEnabled && !string.IsNullOrEmpty(Config.LightSettings.Custom.CustomApiOffMethod) && !string.IsNullOrEmpty(Config.LightSettings.Custom.CustomApiOffUri))
+            {
+                await _customApiService.SetColor("Off");
+            }
+
             await SettingsService.SaveSettings(Config);
         }
         #endregion
+
+        bool IsInWorkingHours()
+        {
+            if (string.IsNullOrEmpty(Config.LightSettings.WorkingHoursStartTime) || string.IsNullOrEmpty(Config.LightSettings.WorkingHoursEndTime) || string.IsNullOrEmpty(Config.LightSettings.WorkingDays))
+            {
+                return false;
+            }
+
+            if (!Config.LightSettings.WorkingDays.Contains(DateTime.Now.DayOfWeek.ToString()))
+            {
+                return false;
+            }
+
+            // convert datetime to a TimeSpan
+            bool validStart = TimeSpan.TryParse(Config.LightSettings.WorkingHoursStartTime, out TimeSpan start);
+            bool validEnd = TimeSpan.TryParse(Config.LightSettings.WorkingHoursEndTime, out TimeSpan end);
+            if (!validEnd || !validStart)
+            {
+                return false;
+            }
+
+            TimeSpan now = DateTime.Now.TimeOfDay;
+            // see if start comes before end
+            if (start < end)
+                return start <= now && now <= end;
+            // start is after end, so do the inverse comparison
+            return !(end < now && now < start);
+        }
+
+        private void time_ValueChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursStartTime))
+            {
+                Config.LightSettings.WorkingHoursStartTime = DateTime.Parse(Config.LightSettings.WorkingHoursStartTime).TimeOfDay.ToString();
+            }
+
+            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursEndTime))
+            {
+                Config.LightSettings.WorkingHoursEndTime = DateTime.Parse(Config.LightSettings.WorkingHoursEndTime).TimeOfDay.ToString();
+            }
+
+            SyncOptions();
+            e.Handled = true;
+        }
+
+        private async Task InteractWithLights()
+        {
+            while (true)
+            {
+                await Task.Delay(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000));
+
+                if (Config.LightSettings.SyncLights)
+                {
+                    if (!Config.LightSettings.UseWorkingHours || (Config.LightSettings.UseWorkingHours && IsInWorkingHours()))
+                    {
+                        switch (lightMode)
+                        {
+                            case "Graph":
+                                try
+                                {
+                                    presence = await System.Threading.Tasks.Task.Run(() => GetPresence());
+
+                                    await SetColor(presence.Availability);
+
+                                    if (DateTime.Now.AddMinutes(-5) > settingsLastSaved)
+                                    {
+                                        await SettingsService.SaveSettings(Config);
+                                        settingsLastSaved = DateTime.Now;
+                                    }
+
+                                    MapUI(presence, null, null);
+
+                                }
+                                catch (Exception e)
+                                {
+                                    DiagnosticsClient.TrackException(e);
+                                }
+
+                                break;
+                            case "Theme":
+
+                                try
+                                {
+                                    var theme = ((SolidColorBrush)SystemParameters.WindowGlassBrush).Color;
+                                    var color = $"#{theme.ToString().Substring(3)}";
+
+                                    lblTheme.Content = $"Theme Color is {color}";
+                                    lblTheme.Foreground = (SolidColorBrush)SystemParameters.WindowGlassBrush;
+                                    lblTheme.Visibility = Visibility.Visible;
+
+                                    if (lightMode == "Theme")
+                                    {
+                                        await SetColor(color);
+                                    }
+
+                                    if (DateTime.Now.Minute % 5 == 0)
+                                    {
+                                        await SettingsService.SaveSettings(Config);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    DiagnosticsClient.TrackException(ex);
+                                }
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                }
+            }
+        }
     }
 }

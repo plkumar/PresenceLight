@@ -6,7 +6,7 @@
 trigger:
  branches:
    include:
-   - master
+   - main
  paths:
    exclude:
    - azure-pipelines-worker.yml
@@ -14,7 +14,7 @@ trigger:
    - src/PresenceLight.Worker/*
    - README.md
    - worker-README.md
-      
+
 
 
 stages:
@@ -66,7 +66,8 @@ stages:
       displayName: Update AppxManifest version
 
     - powershell: |
-        ((Get-Content -path .\.chocolatey\tools\ChocolateyInstall.ps1 -Raw) -replace 'Release','PresenceLight.$(Build.BuildNumber)') | Set-Content -Path .\.chocolatey\tools\ChocolateyInstall.ps1
+        ((Get-Content -path .\.chocolatey\tools\ChocolateyInstall.ps1 -Raw) -replace 'ReplaceVersion','$(Build.BuildNumber)') | Set-Content -Path .\.chocolatey\tools\ChocolateyInstall.ps1
+        ((Get-Content -path .\.chocolatey\tools\ChocolateyInstall.ps1 -Raw) -replace 'PackagePath','PresenceLight.Package_$(GitBuildVersionSimple).0_x86.appxbundle') | Set-Content -Path .\.chocolatey\tools\ChocolateyInstall.ps1
       displayName: Update ChocolateyInstall.ps1
 
     - powershell: |
@@ -117,6 +118,8 @@ stages:
         maximumCpuCount: true
 
     - powershell: |
+
+        copy-item -path "$(Build.ArtifactStagingDirectory)\$(ChannelName)\PresenceLight.Package_$(GitBuildVersionSimple).0_Test\PresenceLight.Package_$(GitBuildVersionSimple).0_x86.appxbundle" -destination .\.chocolatey\tools\
         # Chocolatey
         & choco.exe pack .\.chocolatey\PresenceLight.nuspec --version $(NBGV_ChocolateyPackageVersion) --OutputDirectory $(Build.ArtifactStagingDirectory)\$(ChannelName)
       displayName: Create Choco Package
@@ -183,7 +186,7 @@ stages:
               azureSubscription: 'Isaac Levin MSDN (a07802f5-f8df-47d8-9b88-79ba55cfb396)'
               scriptType: 'ps'
               scriptLocation: 'inlineScript'
-              inlineScript: 'az appservice plan update --name levin-signserv-asp-2dnwx6q6jwiay --resource-group SignService --sku P1V2'
+              inlineScript: 'az appservice plan update --name levin-signserv-asp-2dnwx6q6jwiay --resource-group SignService --sku P2V2'
 
           - pwsh: |
               .\SignClient "Sign" `
@@ -197,6 +200,20 @@ stages:
               --description "PresenceLight" `
               --descriptionUrl "https://github.com/isaacrlevin/PresenceLight"
             displayName: Authenticode Sign artifacts
+
+          - pwsh: |
+              .\SignClient "Sign" `
+              --baseDirectory "$(Pipeline.Workspace)\ToSign" `
+              --input "**/*.{appxbundle,appinstaller,zip,nupkg}" `
+              --config "$(Pipeline.Workspace)\SigningScripts\appsettings.json" `
+              --filelist "$(Pipeline.Workspace)\SigningScripts\filelist.txt" `
+              --user "$(SignClientUser)" `
+              --secret "$(SignClientSecret)" `
+              --name "PresenceLight" `
+              --description "PresenceLight" `
+              --descriptionUrl "https://github.com/isaacrlevin/PresenceLight"
+            displayName: Authenticode Sign artifacts If Fail
+            condition: eq(variables['Agent.JobStatus'], 'Failed')
 
           - task: AzureCLI@2
             displayName: Scale Down Sign Service

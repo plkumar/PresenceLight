@@ -43,12 +43,6 @@ namespace PresenceLight.Worker
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            if (!Debugger.IsAttached)
-            {
-                Helpers.OpenBrowser("https://localhost:5001");
-            }
-
-
             while (!stoppingToken.IsCancellationRequested)
             {
 
@@ -59,7 +53,7 @@ namespace PresenceLight.Worker
                         await GetData();
                     }
                     catch { }
-                    await Task.Delay(Convert.ToInt32(Config.PollingInterval * 1000), stoppingToken);
+                    await Task.Delay(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000), stoppingToken);
                 }
                 await Task.Delay(1000, stoppingToken);
             }
@@ -79,16 +73,17 @@ namespace PresenceLight.Worker
 
             _appState.SetUserInfo(user, photo, presence);
 
-            if (!string.IsNullOrEmpty(Config.HueApiKey) && !string.IsNullOrEmpty(Config.HueIpAddress) && !string.IsNullOrEmpty(Config.SelectedHueLightId))
+            if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
             {
-                await _hueService.SetColor(presence.Availability, Config.SelectedHueLightId);
+                await _hueService.SetColor(presence.Availability, Config.LightSettings.Hue.SelectedHueLightId);
             }
 
-            if (Config.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LIFXApiKey))
+            if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
             {
-                await _lifxService.SetColor(presence.Availability, (Selector)Config.SelectedLIFXItemId);
+                await _lifxService.SetColor(presence.Availability, (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
             }
 
+            string availability = string.Empty;
             while (await _userAuthService.IsUserAuthenticated())
             {
                 if (_appState.LightMode == "Graph")
@@ -96,20 +91,24 @@ namespace PresenceLight.Worker
                     token = await _userAuthService.GetAccessToken();
                     presence = await GetPresence(token);
 
-                    _appState.SetPresence(presence);
-                    _logger.LogInformation($"Presence is {presence.Availability}");
-                    if (!string.IsNullOrEmpty(Config.HueApiKey) && !string.IsNullOrEmpty(Config.HueIpAddress) && !string.IsNullOrEmpty(Config.SelectedHueLightId))
+                    if (presence.Availability != availability)
                     {
-                        await _hueService.SetColor(presence.Availability, Config.SelectedHueLightId);
-                    }
+                        _appState.SetPresence(presence);
+                        _logger.LogInformation($"Presence is {presence.Availability}");
+                        if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
+                        {
+                            await _hueService.SetColor(presence.Availability, Config.LightSettings.Hue.SelectedHueLightId);
+                        }
 
-                    if (Config.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LIFXApiKey))
-                    {
-                        await _lifxService.SetColor(presence.Availability, (Selector)Config.SelectedLIFXItemId);
+                        if (Config.LightSettings.LIFX.IsLIFXEnabled && !string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXApiKey))
+                        {
+                            await _lifxService.SetColor(presence.Availability, (Selector)Config.LightSettings.LIFX.SelectedLIFXItemId);
+                        }
                     }
                 }
 
-                Thread.Sleep(Convert.ToInt32(Config.PollingInterval * 1000));
+                availability = presence.Availability;
+                Thread.Sleep(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000));
             }
 
             _logger.LogInformation("User logged out, no longer polling for presence.");
