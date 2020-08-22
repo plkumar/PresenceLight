@@ -46,6 +46,8 @@ namespace PresenceLight
         private readonly IGraphService _graphservice;
         private WindowState lastWindowState;
 
+        private bool IsWorkingHours;
+
         #region Init
         public MainWindow(IGraphService graphService, IHueService hueService, LIFXService lifxService, IYeelightService yeelightService, ICustomApiService customApiService, IOptionsMonitor<ConfigWrapper> optionsAccessor, LIFXOAuthHelper lifxOAuthHelper)
         {
@@ -85,6 +87,7 @@ namespace PresenceLight
             packageVersion.Text = ThisAppInfo.GetPackageVersion();
             installedFrom.Text = ThisAppInfo.GetAppInstallerUri();
             installLocation.Text = ThisAppInfo.GetInstallLocation();
+            settingsLocation.Text = ThisAppInfo.GetSettingsLocation();
             installedDate.Text = ThisAppInfo.GetInstallationDate();
             RuntimeVersionInfo.Text = ThisAppInfo.GetDotNetRuntimeInfo();
         }
@@ -103,6 +106,22 @@ namespace PresenceLight
             else
             {
                 White.IsChecked = true;
+            }
+
+            switch (Config.LightSettings.HoursPassedStatus)
+            {
+                case "Keep":
+                    HourStatusKeep.IsChecked = true;
+                    break;
+                case "White":
+                    HourStatusWhite.IsChecked = true;
+                    break;
+                case "Off":
+                    HourStatusOff.IsChecked = true;
+                    break;
+                default:
+                    HourStatusKeep.IsChecked = true;
+                    break;
             }
 
             PopulateWorkingDays();
@@ -126,89 +145,6 @@ namespace PresenceLight
             }
         }
 
-        private async Task LoadSettings()
-        {
-            if (!(await SettingsService.IsFilePresent()))
-            {
-                await SettingsService.SaveSettings(_options);
-            }
-
-            Config = await SettingsService.LoadSettings();
-
-            if (string.IsNullOrEmpty(Config.RedirectUri))
-            {
-                await SettingsService.DeleteSettings();
-                await SettingsService.SaveSettings(_options);
-            }
-            if (Config.LightSettings.UseWorkingHours)
-            {
-                pnlWorkingHours.Visibility = Visibility.Visible;
-                SyncOptions();
-            }
-            else
-            {
-                pnlWorkingHours.Visibility = Visibility.Collapsed;
-                SyncOptions();
-            }
-
-            if (Config.LightSettings.Hue.IsPhillipsHueEnabled)
-            {
-                pnlPhillips.Visibility = Visibility.Visible;
-                SyncOptions();
-            }
-            else
-            {
-                pnlPhillips.Visibility = Visibility.Collapsed;
-            }
-
-            if (Config.LightSettings.Yeelight.IsYeelightEnabled)
-            {
-                pnlYeelight.Visibility = Visibility.Visible;
-                SyncOptions();
-            }
-            else
-            {
-                pnlYeelight.Visibility = Visibility.Collapsed;
-            }
-
-            if (Config.LightSettings.LIFX.IsLIFXEnabled)
-            {
-                getTokenLink.Visibility = Visibility.Visible;
-                pnlLIFX.Visibility = Visibility.Visible;
-
-                SyncOptions();
-            }
-            else
-            {
-                getTokenLink.Visibility = Visibility.Collapsed;
-                pnlLIFX.Visibility = Visibility.Collapsed;
-            }
-
-            if (Config.LightSettings.Custom.IsCustomApiEnabled)
-            {
-                pnlCustomApi.Visibility = Visibility.Visible;
-                customApiAvailableMethod.SelectedValue = Config.LightSettings.Custom.CustomApiAvailableMethod;
-                customApiBusyMethod.SelectedValue = Config.LightSettings.Custom.CustomApiBusyMethod;
-                customApiBeRightBackMethod.SelectedValue = Config.LightSettings.Custom.CustomApiBeRightBackMethod;
-                customApiAwayMethod.SelectedValue = Config.LightSettings.Custom.CustomApiAwayMethod;
-                customApiDoNotDisturbMethod.SelectedValue = Config.LightSettings.Custom.CustomApiDoNotDisturbMethod;
-                customApiOfflineMethod.SelectedValue = Config.LightSettings.Custom.CustomApiOfflineMethod;
-                customApiOffMethod.SelectedValue = Config.LightSettings.Custom.CustomApiOffMethod;
-                SyncOptions();
-            }
-            else
-            {
-                pnlCustomApi.Visibility = Visibility.Collapsed;
-            }
-            if (!string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXClientId) && !(string.IsNullOrEmpty(Config.LightSettings.LIFX.LIFXClientSecret)))
-            {
-                getTokenLink.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                getTokenLink.Visibility = Visibility.Collapsed;
-            }
-        }
         #endregion
 
         #region Profile Panel
@@ -239,6 +175,7 @@ namespace PresenceLight
             signInPanel.Visibility = Visibility.Collapsed;
             lblTheme.Visibility = Visibility.Collapsed;
             loadingPanel.Visibility = Visibility.Visible;
+
             var (profile, presence) = await System.Threading.Tasks.Task.Run(() => GetBatchContent());
             var photo = await System.Threading.Tasks.Task.Run(() => GetPhoto());
 
@@ -251,10 +188,53 @@ namespace PresenceLight
                 MapUI(presence, profile, LoadImage(photo));
             }
 
-            if (lightMode == "Graph")
+            if (Config.LightSettings.SyncLights)
             {
-                await SetColor(presence.Availability);
+                if (!Config.LightSettings.UseWorkingHours)
+                {
+                    if (lightMode == "Graph")
+                    {
+                        await SetColor(presence.Availability, presence.Activity);
+                    }
+                }
+                else
+                {
+                    bool previousWorkingHours = IsWorkingHours;
+                    if (IsInWorkingHours())
+                    {
+                        if (lightMode == "Graph")
+                        {
+                            await SetColor(presence.Availability, presence.Activity);
+                        }
+                    }
+                    else
+                    {
+                        // check to see if working hours have passed
+                        if (previousWorkingHours)
+                        {
+                            if (lightMode == "Graph")
+                            {
+                                switch (Config.LightSettings.HoursPassedStatus)
+                                {
+                                    case "Keep":
+                                        await SetColor(presence.Availability, presence.Activity);
+                                        break;
+                                    case "White":
+                                        await SetColor("Offline", presence.Activity);
+                                        break;
+                                    case "Off":
+                                        await SetColor("Off", presence.Activity);
+                                        break;
+                                    default:
+                                        await SetColor(presence.Availability, presence.Activity);
+                                        break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
             loadingPanel.Visibility = Visibility.Collapsed;
             this.signInPanel.Visibility = Visibility.Collapsed;
             hueIpAddress.IsEnabled = false;
@@ -268,7 +248,7 @@ namespace PresenceLight
             await InteractWithLights();
         }
 
-        public async Task SetColor(string color)
+        public async Task SetColor(string color, string? activity = null)
         {
             if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
             {
@@ -287,9 +267,9 @@ namespace PresenceLight
 
             if (Config.LightSettings.Custom.IsCustomApiEnabled)
             {
-                string response = await _customApiService.SetColor(color);
+                string response = await _customApiService.SetColor(color, activity);
                 customApiLastResponse.Content = response;
-                if (response.StartsWith("Error:"))
+                if (response.Contains("Error:"))
                 {
                     customApiLastResponse.Foreground = new SolidColorBrush(Colors.Red);
                 }
@@ -481,142 +461,7 @@ namespace PresenceLight
 
             return (User: user, Presence: presence);
         }
-        #endregion
-
-        #region Settings Panel
-        private async void SaveSettings_Click(object sender, RoutedEventArgs e)
-        {
-            btnSettings.IsEnabled = false;
-            if (Transparent.IsChecked == true)
-            {
-                Config.IconType = "Transparent";
-            }
-            else
-            {
-                Config.IconType = "White";
-            }
-
-            CheckAAD();
-            Config.LightSettings.DefaultBrightness = Convert.ToInt32(brightness.Value);
-
-            SetWorkingDays();
-
-            SyncOptions();
-            await SettingsService.SaveSettings(Config);
-            lblSettingSaved.Visibility = Visibility.Visible;
-            btnSettings.IsEnabled = true;
-        }
-
-        private void SetWorkingDays()
-        {
-            List<string> days = new List<string>();
-
-            if (Monday.IsChecked.Value)
-            {
-                days.Add("Monday");
-            }
-
-            if (Tuesday.IsChecked.Value)
-            {
-                days.Add("Tuesday");
-            }
-
-            if (Wednesday.IsChecked.Value)
-            {
-                days.Add("Wednesday");
-            }
-
-            if (Thursday.IsChecked.Value)
-            {
-                days.Add("Thursday");
-            }
-
-            if (Friday.IsChecked.Value)
-            {
-                days.Add("Friday");
-            }
-
-            if (Saturday.IsChecked.Value)
-            {
-                days.Add("Saturday");
-            }
-
-            if (Sunday.IsChecked.Value)
-            {
-                days.Add("Sunday");
-            }
-
-            Config.LightSettings.WorkingDays = string.Join("|", days);
-        }
-
-        private void CheckAAD()
-        {
-            Regex r = new Regex(@"^(\{){0,1}[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}(\}){0,1}$");
-            if (string.IsNullOrEmpty(Config.ClientId) || string.IsNullOrEmpty(Config.RedirectUri) || !r.IsMatch(Config.ClientId))
-            {
-                configErrorPanel.Visibility = Visibility.Visible;
-                dataPanel.Visibility = Visibility.Hidden;
-                signInPanel.Visibility = Visibility.Hidden;
-                return;
-            }
-
-            SyncOptions();
-
-            configErrorPanel.Visibility = Visibility.Hidden;
-
-            if (dataPanel.Visibility != Visibility.Visible)
-            {
-                signInPanel.Visibility = Visibility.Visible;
-            }
-
-            if (_graphServiceClient == null)
-            {
-                _graphServiceClient = _graphservice.GetAuthenticatedGraphClient(typeof(WPFAuthorizationProvider));
-            }
-        }
-        #endregion
-
-        private void PopulateWorkingDays()
-        {
-            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingDays))
-            {
-
-                if (Config.LightSettings.WorkingDays.Contains("Monday"))
-                {
-                    Monday.IsChecked = true;
-                }
-
-                if (Config.LightSettings.WorkingDays.Contains("Tuesday"))
-                {
-                    Tuesday.IsChecked = true;
-                }
-
-                if (Config.LightSettings.WorkingDays.Contains("Wednesday"))
-                {
-                    Wednesday.IsChecked = true;
-                }
-
-                if (Config.LightSettings.WorkingDays.Contains("Thursday"))
-                {
-                    Thursday.IsChecked = true;
-                }
-
-                if (Config.LightSettings.WorkingDays.Contains("Friday"))
-                {
-                    Friday.IsChecked = true;
-                }
-
-                if (Config.LightSettings.WorkingDays.Contains("Saturday"))
-                {
-                    Saturday.IsChecked = true;
-                }
-
-                if (Config.LightSettings.WorkingDays.Contains("Sunday"))
-                {
-                    Sunday.IsChecked = true;
-                }
-            }
-        }
+        #endregion      
 
 
         private void TabControl_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -626,60 +471,7 @@ namespace PresenceLight
             lblSettingSaved.Visibility = Visibility.Collapsed;
         }
 
-        private async void cbSyncLights(object sender, RoutedEventArgs e)
-        {
-            if (!Config.LightSettings.SyncLights)
-            {
-                await SetColor("Off");
-                turnOffButton.Visibility = Visibility.Collapsed;
-                turnOnButton.Visibility = Visibility.Visible;
-            }
 
-            SyncOptions();
-            await SettingsService.SaveSettings(Config);
-            e.Handled = true;
-        }
-
-        private async void cbUseDefaultBrightnessChanged(object sender, RoutedEventArgs e)
-        {
-            if (Config.LightSettings.UseDefaultBrightness)
-            {
-                pnlDefaultBrightness.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                pnlDefaultBrightness.Visibility = Visibility.Collapsed;
-            }
-
-            SyncOptions();
-            await SettingsService.SaveSettings(Config);
-            e.Handled = true;
-        }
-
-        private void cbUseWorkingHoursChanged(object sender, RoutedEventArgs e)
-        {
-            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursStartTime))
-            {
-                Config.LightSettings.WorkingHoursStartTime = DateTime.Parse(Config.LightSettings.WorkingHoursStartTime).TimeOfDay.ToString();
-            }
-
-            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursEndTime))
-            {
-                Config.LightSettings.WorkingHoursEndTime = DateTime.Parse(Config.LightSettings.WorkingHoursEndTime).TimeOfDay.ToString();
-            }
-
-            if (Config.LightSettings.UseWorkingHours)
-            {
-                pnlWorkingHours.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                pnlWorkingHours.Visibility = Visibility.Collapsed;
-            }
-
-            SyncOptions();
-            e.Handled = true;
-        }
 
         #region Tray Methods
 
@@ -698,6 +490,7 @@ namespace PresenceLight
                 this.WindowState = this.lastWindowState;
             }
         }
+
         private void OnOpenClick(object sender, RoutedEventArgs e)
         {
             this.Show();
@@ -738,7 +531,6 @@ namespace PresenceLight
             this.WindowState = this.lastWindowState;
         }
 
-
         private async void OnExitClick(object sender, RoutedEventArgs e)
         {
             if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
@@ -754,6 +546,7 @@ namespace PresenceLight
             await SettingsService.SaveSettings(Config);
             System.Windows.Application.Current.Shutdown();
         }
+
         private async void Current_SessionEnding(object sender, SessionEndingCancelEventArgs e)
         {
             if (!string.IsNullOrEmpty(Config.LightSettings.Hue.HueApiKey) && !string.IsNullOrEmpty(Config.LightSettings.Hue.HueIpAddress) && !string.IsNullOrEmpty(Config.LightSettings.Hue.SelectedHueLightId))
@@ -769,56 +562,13 @@ namespace PresenceLight
 
             if (Config.LightSettings.Custom.IsCustomApiEnabled && !string.IsNullOrEmpty(Config.LightSettings.Custom.CustomApiOffMethod) && !string.IsNullOrEmpty(Config.LightSettings.Custom.CustomApiOffUri))
             {
-                await _customApiService.SetColor("Off");
+                await _customApiService.SetColor("Off", "Off");
             }
 
             await SettingsService.SaveSettings(Config);
         }
+
         #endregion
-
-        bool IsInWorkingHours()
-        {
-            if (string.IsNullOrEmpty(Config.LightSettings.WorkingHoursStartTime) || string.IsNullOrEmpty(Config.LightSettings.WorkingHoursEndTime) || string.IsNullOrEmpty(Config.LightSettings.WorkingDays))
-            {
-                return false;
-            }
-
-            if (!Config.LightSettings.WorkingDays.Contains(DateTime.Now.DayOfWeek.ToString()))
-            {
-                return false;
-            }
-
-            // convert datetime to a TimeSpan
-            bool validStart = TimeSpan.TryParse(Config.LightSettings.WorkingHoursStartTime, out TimeSpan start);
-            bool validEnd = TimeSpan.TryParse(Config.LightSettings.WorkingHoursEndTime, out TimeSpan end);
-            if (!validEnd || !validStart)
-            {
-                return false;
-            }
-
-            TimeSpan now = DateTime.Now.TimeOfDay;
-            // see if start comes before end
-            if (start < end)
-                return start <= now && now <= end;
-            // start is after end, so do the inverse comparison
-            return !(end < now && now < start);
-        }
-
-        private void time_ValueChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursStartTime))
-            {
-                Config.LightSettings.WorkingHoursStartTime = DateTime.Parse(Config.LightSettings.WorkingHoursStartTime).TimeOfDay.ToString();
-            }
-
-            if (!string.IsNullOrEmpty(Config.LightSettings.WorkingHoursEndTime))
-            {
-                Config.LightSettings.WorkingHoursEndTime = DateTime.Parse(Config.LightSettings.WorkingHoursEndTime).TimeOfDay.ToString();
-            }
-
-            SyncOptions();
-            e.Handled = true;
-        }
 
         private async Task InteractWithLights()
         {
@@ -826,63 +576,115 @@ namespace PresenceLight
             {
                 await Task.Delay(Convert.ToInt32(Config.LightSettings.PollingInterval * 1000));
 
+                bool touchLight = false;
+                string newColor = "";
+
                 if (Config.LightSettings.SyncLights)
                 {
-                    if (!Config.LightSettings.UseWorkingHours || (Config.LightSettings.UseWorkingHours && IsInWorkingHours()))
+                    if (!Config.LightSettings.UseWorkingHours)
                     {
-                        switch (lightMode)
+                        if (lightMode == "Graph")
                         {
-                            case "Graph":
-                                try
-                                {
-                                    presence = await System.Threading.Tasks.Task.Run(() => GetPresence());
-
-                                    await SetColor(presence.Availability);
-
-                                    if (DateTime.Now.AddMinutes(-5) > settingsLastSaved)
-                                    {
-                                        await SettingsService.SaveSettings(Config);
-                                        settingsLastSaved = DateTime.Now;
-                                    }
-
-                                    MapUI(presence, null, null);
-
-                                }
-                                catch (Exception e)
-                                {
-                                    DiagnosticsClient.TrackException(e);
-                                }
-
-                                break;
-                            case "Theme":
-
-                                try
-                                {
-                                    var theme = ((SolidColorBrush)SystemParameters.WindowGlassBrush).Color;
-                                    var color = $"#{theme.ToString().Substring(3)}";
-
-                                    lblTheme.Content = $"Theme Color is {color}";
-                                    lblTheme.Foreground = (SolidColorBrush)SystemParameters.WindowGlassBrush;
-                                    lblTheme.Visibility = Visibility.Visible;
-
-                                    if (lightMode == "Theme")
-                                    {
-                                        await SetColor(color);
-                                    }
-
-                                    if (DateTime.Now.Minute % 5 == 0)
-                                    {
-                                        await SettingsService.SaveSettings(Config);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    DiagnosticsClient.TrackException(ex);
-                                }
-                                break;
-                            default:
-                                break;
+                            touchLight = true;
                         }
+                    }
+                    else
+                    {
+                        bool previousWorkingHours = IsWorkingHours;
+                        if (IsInWorkingHours())
+                        {
+                            if (lightMode == "Graph")
+                            {
+                                touchLight = true;
+                            }
+                        }
+                        else
+                        {
+                            // check to see if working hours have passed
+                            if (previousWorkingHours)
+                            {
+                                switch (Config.LightSettings.HoursPassedStatus)
+                                {
+                                    case "Keep":
+                                        break;
+                                    case "White":
+                                        newColor = "Offline";
+                                        break;
+                                    case "Off":
+                                        newColor = "Off";
+                                        break;
+                                    default:
+                                        break;
+                                }
+                                touchLight = true;
+                            }
+
+                        }
+                    }
+                }
+
+                if (touchLight)
+                {
+                    switch (lightMode)
+                    {
+                        case "Graph":
+                            try
+                            {
+                                presence = await System.Threading.Tasks.Task.Run(() => GetPresence());
+
+                                if (newColor == string.Empty)
+                                {
+                                    await SetColor(presence.Availability, presence.Activity);
+                                }
+                                else
+                                {
+                                    await SetColor(newColor, presence.Activity);
+                                }
+                                
+
+                                if (DateTime.Now.AddMinutes(-5) > settingsLastSaved)
+                                {
+                                    await SettingsService.SaveSettings(Config);
+                                    settingsLastSaved = DateTime.Now;
+                                }
+
+                                MapUI(presence, null, null);
+
+                            }
+                            catch (Exception e)
+                            {
+                                DiagnosticsClient.TrackException(e);
+                            }
+
+                            break;
+                        case "Theme":
+
+                            try
+                            {
+                                var theme = ((SolidColorBrush)SystemParameters.WindowGlassBrush).Color;
+                                var color = $"#{theme.ToString().Substring(3)}";
+
+                                lblTheme.Content = $"Theme Color is {color}";
+                                lblTheme.Foreground = (SolidColorBrush)SystemParameters.WindowGlassBrush;
+                                lblTheme.Visibility = Visibility.Visible;
+
+                                if (lightMode == "Theme")
+                                {
+                                    await SetColor(color);
+                                }
+
+                                if (DateTime.Now.Minute % 5 == 0)
+                                {
+                                    await SettingsService.SaveSettings(Config);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                DiagnosticsClient.TrackException(ex);
+                            }
+                            break;
+                        default:
+                            break;
                     }
                 }
             }
